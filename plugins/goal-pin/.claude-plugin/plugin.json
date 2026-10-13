@@ -1,0 +1,12 @@
+{
+  "name": "goal-pin",
+  "version": "0.1.0",
+  "description": "Pins your current goal above the Claude Code prompt: set with /goal <text>, or taken from the session's first prompt.",
+  "types": "./types/index.d.ts",
+  "license": "MIT",
+  "author": {
+    "name": "jdk-official"
+  },
+  "homepage": "https://github.com/jdk-official/claude-code-terminal-bar-crawl",
+  "repository": "https://github.com/jdk-official/claude-code-terminal-bar-crawl"
+}

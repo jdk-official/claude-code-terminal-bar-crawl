@@ -1,0 +1,38 @@
+{
+  "name": "project-dashboard",
+  "version": "0.4.0",
+  "description": "Side pane for Claude Code: this session's dev servers (click to open), the repo's markdown docs, and the backlog-delivery PBI board. Folds persist.",
+  "types": "./types/index.d.ts",
+  "license": "MIT",
+  "userConfig": {
+    "docOpener": {
+      "type": "string",
+      "title": "Doc opener",
+      "description": "Command that opens a markdown file; the path is appended. For example xdg-open, code, or your own script.",
+      "default": "xdg-open"
+    },
+    "browserOpener": {
+      "type": "string",
+      "title": "Browser opener",
+      "description": "Command that opens a dev server URL; the URL is appended.",
+      "default": "xdg-open"
+    },
+    "launchPrefix": {
+      "type": "string",
+      "title": "Launch prefix",
+      "description": "Optional wrapper placed before the opener, for example 'uwsm-app --' on Omarchy or Hyprland with uwsm.",
+      "default": ""
+    },
+    "moveToWorkspace": {
+      "type": "boolean",
+      "title": "Open docs on this workspace",
+      "description": "Hyprland only: move the window a doc opens in onto the workspace of the focused terminal. Needs hyprctl and jq.",
+      "default": false
+    }
+  },
+  "author": {
+    "name": "jdk-official"
+  },
+  "homepage": "https://github.com/jdk-official/claude-code-terminal-bar-crawl",
+  "repository": "https://github.com/jdk-official/claude-code-terminal-bar-crawl"
+}

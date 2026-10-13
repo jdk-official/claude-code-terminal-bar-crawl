@@ -1,0 +1,22 @@
+{
+  "name": "claude-code-terminal-bar-crawl",
+  "owner": {
+    "name": "jdk-official"
+  },
+  "metadata": {
+    "description": "A status line, a side pane and a top-bar goal pin for the Claude Code terminal.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "project-dashboard",
+      "source": "./plugins/project-dashboard",
+      "description": "Side pane: this session's dev servers (click to open), repo docs (click to open), and a PBI board summary for backlog-delivery repos."
+    },
+    {
+      "name": "goal-pin",
+      "source": "./plugins/goal-pin",
+      "description": "Top bar: pins the current goal above the prompt. /goal <text>, or the first prompt of the session."
+    }
+  ]
+}
