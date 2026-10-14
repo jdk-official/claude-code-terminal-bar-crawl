@@ -92,6 +92,8 @@ const project = atom({ plugin: 'project-dashboard', key: 'project' } as const, n
 const notice = atom({ plugin: 'project-dashboard', key: 'notice' } as const, null)
 // Headings the person folded away; empty means everything is open.
 const collapsed = atom({ plugin: 'project-dashboard', key: 'collapsed' } as const, [])
+// Capped PBI lists the person expanded to show every item; empty means all stay capped.
+const expanded = atom({ plugin: 'project-dashboard', key: 'expanded' } as const, [])
 const DOCS_KEY = 'docs'
 
 // `git status -sb`: "## main...origin/main [ahead 2, behind 1]" then one line per path.
@@ -357,6 +359,8 @@ export const register: Register = (on, options) => {
     // Folded headings persist across sessions in the plugin's own store.
     const saved = await $.store.get('collapsed').catch(() => undefined)
     await update($, collapsed, () => savedFolds(saved))
+    const savedExpanded = await $.store.get('expanded').catch(() => undefined)
+    await update($, expanded, () => savedFolds(savedExpanded))
 
     const refresh = async (): Promise<void> => {
       try {
@@ -473,14 +477,16 @@ export const register: Register = (on, options) => {
     const name = await read($, project)
     const last = await read($, notice)
     const shut = await read($, collapsed)
+    const wide = await read($, expanded)
 
     const plan = pbis === null ? null : planNext(pbis.items)
     const titleOf = (id: string): string => pbis?.items.find(one => one.id === id)?.title ?? ''
     const mine = pbis === null ? null : sessionPbi(repo?.branch ?? '', name ?? '', pbis.items)
-    const nextUp = (plan?.next ?? []).slice(0, LIST_CAPS.next)
-    const waiting = (plan?.waiting ?? []).slice(0, LIST_CAPS.waiting)
-    const promotable = (plan?.promote ?? []).slice(0, LIST_CAPS.promote)
-    const more = (all: number, cap: number): string | null => (all > cap ? `+${all - cap} more` : null)
+    const shown = <T,>(all: T[], list: 'next' | 'waiting' | 'promote'): T[] =>
+      wide.includes(`more:${list}`) ? all : all.slice(0, LIST_CAPS[list])
+    const nextUp = shown(plan?.next ?? [], 'next')
+    const waiting = shown(plan?.waiting ?? [], 'waiting')
+    const promotable = shown(plan?.promote ?? [], 'promote')
 
     // A PBI row opens its file when there is one.
     const pbiRow = (id: string, text: string, color: 'success' | 'warning' | 'error' | undefined) => {
@@ -504,6 +510,27 @@ export const register: Register = (on, options) => {
         await update($, collapsed, () => next)
         await $.store.set('collapsed', next).catch(() => undefined)
       })
+    }
+
+    const widen = (key: string): void => {
+      void read($, expanded).then(async list => {
+        const next = toggled(list, key)
+        await update($, expanded, () => next)
+        await $.store.set('expanded', next).catch(() => undefined)
+      })
+    }
+
+    // Under its cap a list has nothing hidden, so it gets no control.
+    const more = (list: 'next' | 'waiting' | 'promote', total: number) => {
+      const hidden = total - LIST_CAPS[list]
+      if (hidden <= 0) return null
+      const open = wide.includes(`more:${list}`)
+
+      return (
+        <Button key={`more-${list}`} plain onPress={() => widen(`more:${list}`)}>
+          <Text dimColor>{open ? 'show fewer' : `+${hidden} more`}</Text>
+        </Button>
+      )
     }
 
     const topFold = (key: string, label: string) => (
@@ -640,9 +667,7 @@ export const register: Register = (on, options) => {
                             'success',
                           ),
                         )}
-                        {more(plan?.next.length ?? 0, LIST_CAPS.next) === null ? null : (
-                          <Text dimColor>{more(plan?.next.length ?? 0, LIST_CAPS.next)}</Text>
-                        )}
+                        {more('next', plan?.next.length ?? 0)}
                       </Box>
                     )}
                   </Box>
@@ -659,9 +684,7 @@ export const register: Register = (on, options) => {
                             undefined,
                           ),
                         )}
-                        {more(plan?.promote.length ?? 0, LIST_CAPS.promote) === null ? null : (
-                          <Text dimColor>{more(plan?.promote.length ?? 0, LIST_CAPS.promote)}</Text>
-                        )}
+                        {more('promote', plan?.promote.length ?? 0)}
                       </Box>
                     )}
                   </Box>
@@ -678,9 +701,7 @@ export const register: Register = (on, options) => {
                             undefined,
                           ),
                         )}
-                        {more(plan?.waiting.length ?? 0, LIST_CAPS.waiting) === null ? null : (
-                          <Text dimColor>{more(plan?.waiting.length ?? 0, LIST_CAPS.waiting)}</Text>
-                        )}
+                        {more('waiting', plan?.waiting.length ?? 0)}
                       </Box>
                     )}
                   </Box>

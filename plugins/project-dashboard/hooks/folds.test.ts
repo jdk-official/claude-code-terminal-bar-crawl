@@ -37,6 +37,7 @@ const world = (
   store: Record<string, unknown>,
   writes: unknown[] = [],
   runs: string[][] = [],
+  board: string = BOARD,
 ): void => {
   mock.clock(on)
   // The store, kept here so the test can see every write.
@@ -63,12 +64,12 @@ const world = (
     return { value: { exitCode: 1, stdout: '', stderr: '', isTruncated: false } }
   })
   on('fs.read', async (_$, e) =>
-    e.path === '/r/docs/backlog/BOARD.md' ? { value: BOARD } : { deny: 'ENOENT' },
+    e.path === '/r/docs/backlog/BOARD.md' ? { value: board } : { deny: 'ENOENT' },
   )
   on('fs.list', async (_$, e) => {
     if (e.path === '/r/docs/adr') return { value: [file('0001-a.md'), file('0002-b.md')] }
     if (e.path === '/r/docs/backlog/handovers') return { value: [file('PBI-1.md')] }
-    if (e.path === '/r/docs/backlog/pbi') return { value: [file('PBI-1-first.md'), file('PBI-2-second.md'), file('PBI-3-third.md')] }
+    if (e.path === '/r/docs/backlog/pbi') return { value: [file('PBI-1-first.md'), file('PBI-2-second.md'), file('PBI-3-third.md')].concat(board === BOARD ? [] : [file('PBI-6-sixth.md'), file('PBI-14-promo.md'), file('PBI-24-wait.md')]) }
 
     return { value: [] }
   })
@@ -144,4 +145,201 @@ test('the backlog is listed and PBI rows open their file', async ($, on) => {
   const opened = runs.find(argv => argv.includes('/r/docs/backlog/pbi/PBI-2-second.md'))
   expect(opened).toBeDefined()
   expect(opened?.[0]).toBe('sh')
+})
+
+// Five unblocked Ready PBIs: two more than the cap of three.
+const WIDE_BOARD = [
+  '# BOARD',
+  '## Ready',
+  '| ID | Title | Depends on | Conflict group | Conflict risk |',
+  '|----|-------|------------|----------------|---------------|',
+  ...[2, 3, 4, 5, 6].map(n => `| PBI-${n} | Item${n} | PBI-1 | g${n} | Low |`),
+  '## Done',
+  '| ID | Title | PR |',
+  '|----|-------|----|',
+  '| PBI-1 | First | merged |',
+].join('\n')
+
+const visible = async (ui: Awaited<ReturnType<Parameters<Parameters<typeof test>[1]>[0]['ui']['mount']>>) => {
+  let count = 0
+  for (const n of [2, 3, 4, 5, 6]) if ((await ui.find({ text: new RegExp(`PBI-${n}  Item`) })) !== undefined) count += 1
+
+  return count
+}
+
+test('+N more expands a capped list, show fewer collapses it, and the store follows', async ($, on) => {
+  const writes: unknown[] = []
+  world(on, {}, writes, [], WIDE_BOARD)
+  await started($)
+  const ui = await $.ui.mount({ ...TARGET })
+
+  expect(await visible(ui)).toBe(3)
+  expect(await ui.find({ text: /\+2 more/ })).toBeDefined()
+
+  await ui.press({ key: 'more-next' })
+  expect(await visible(ui)).toBe(5)
+  expect(await ui.find({ text: /show fewer/ })).toBeDefined()
+  expect(writes.at(-1)).toEqual(['more:next'])
+
+  // Expanded rows still open their file.
+  expect(await ui.find({ key: 'pbi-PBI-6' })).toBeDefined()
+
+  await ui.press({ key: 'more-next' })
+  expect(await visible(ui)).toBe(3)
+  expect(writes.at(-1)).toEqual([])
+})
+
+test('a fresh session draws a saved expansion, and tolerates a malformed one', async ($, on) => {
+  world(on, { expanded: ['more:next'] }, [], [], WIDE_BOARD)
+  await started($)
+  const ui = await $.ui.mount({ ...TARGET })
+  expect(await visible(ui)).toBe(5)
+  expect(await ui.find({ text: /show fewer/ })).toBeDefined()
+})
+
+test('a malformed saved expansion leaves lists capped', async ($, on) => {
+  world(on, { expanded: { next: true } }, [], [], WIDE_BOARD)
+  await started($)
+  const ui = await $.ui.mount({ ...TARGET })
+  expect(await visible(ui)).toBe(3)
+})
+
+test('a list within its cap shows no control', async ($, on) => {
+  world(on, {})
+  await started($)
+  const ui = await $.ui.mount({ ...TARGET })
+  expect(await ui.find({ key: 'more-next' })).toBeUndefined()
+  expect(await ui.find({ text: /more$/ })).toBeUndefined()
+})
+
+// All three capped lists overflow: five Ready (cap 3), six promotable Proposed (cap 4)
+// and six Proposed waiting on an unfinished PBI (cap 4).
+const ALL_BOARD = [
+  '# BOARD',
+  '## Proposed',
+  '| ID | Title | Depends on | Notes |',
+  '|----|-------|------------|-------|',
+  ...[10, 11, 12, 13, 14, 15].map(n => `| PBI-${n} | Promo${n} | PBI-1 | n |`),
+  ...[20, 21, 22, 23, 24, 25].map(n => `| PBI-${n} | Wait${n} | PBI-2 | n |`),
+  '## Ready',
+  '| ID | Title | Depends on | Conflict group | Conflict risk |',
+  '|----|-------|------------|----------------|---------------|',
+  ...[2, 3, 4, 5, 6].map(n => `| PBI-${n} | Item${n} | PBI-1 | g${n} | Low |`),
+  '## Done',
+  '| ID | Title | PR |',
+  '|----|-------|----|',
+  '| PBI-1 | First | merged |',
+].join('\n')
+
+type Mounted = Awaited<ReturnType<Parameters<Parameters<typeof test>[1]>[0]['ui']['mount']>>
+
+const LISTS = [
+  { name: 'next', ids: [2, 3, 4, 5, 6], cap: 3, openFile: 6 },
+  { name: 'promote', ids: [10, 11, 12, 13, 14, 15], cap: 4, openFile: 14 },
+  { name: 'waiting', ids: [20, 21, 22, 23, 24, 25], cap: 4, openFile: 24 },
+] as const
+
+const shownIn = async (ui: Mounted, ids: readonly number[]): Promise<number> => {
+  let count = 0
+  for (const n of ids) if ((await ui.find({ text: new RegExp(`PBI-${n}  `) })) !== undefined) count += 1
+
+  return count
+}
+
+const caps = async (ui: Mounted): Promise<number[]> =>
+  Promise.all(LISTS.map(one => shownIn(ui, one.ids)))
+
+for (const list of LISTS) {
+  const hidden = list.ids.length - list.cap
+  const stored = `more:${list.name}`
+
+  test(`${list.name}: +N more expands the list, show fewer collapses it, and the store follows`, async ($, on) => {
+    const writes: unknown[] = []
+    world(on, {}, writes, [], ALL_BOARD)
+    await started($)
+    const ui = await $.ui.mount({ ...TARGET })
+
+    expect(await shownIn(ui, list.ids)).toBe(list.cap)
+    expect(await ui.find({ text: new RegExp(`\\+${hidden} more`) })).toBeDefined()
+
+    await ui.press({ key: `more-${list.name}` })
+    expect(await shownIn(ui, list.ids)).toBe(list.ids.length)
+    expect(await ui.find({ text: /show fewer/ })).toBeDefined()
+    expect(writes.at(-1)).toEqual([stored])
+
+    // A row of the expanded list still opens its PBI file.
+    expect(await ui.find({ key: `pbi-PBI-${list.openFile}` })).toBeDefined()
+
+    await ui.press({ key: `more-${list.name}` })
+    expect(await shownIn(ui, list.ids)).toBe(list.cap)
+    expect(writes.at(-1)).toEqual([])
+  })
+
+  test(`${list.name}: a fresh session draws a saved expansion`, async ($, on) => {
+    world(on, { expanded: [stored] }, [], [], ALL_BOARD)
+    await started($)
+    const ui = await $.ui.mount({ ...TARGET })
+
+    expect(await shownIn(ui, list.ids)).toBe(list.ids.length)
+    expect(await ui.find({ text: /show fewer/ })).toBeDefined()
+  })
+
+  test(`${list.name}: a malformed saved expansion leaves it capped`, async ($, on) => {
+    world(on, { expanded: { [list.name]: true } }, [], [], ALL_BOARD)
+    await started($)
+    const ui = await $.ui.mount({ ...TARGET })
+
+    expect(await shownIn(ui, list.ids)).toBe(list.cap)
+  })
+
+  test(`${list.name}: folding the heading hides the list and unfolding keeps it expanded`, async ($, on) => {
+    world(on, { expanded: [stored] }, [], [], ALL_BOARD)
+    await started($)
+    const ui = await $.ui.mount({ ...TARGET })
+
+    await ui.press({ key: `fold-pbis:${list.name}` })
+    expect(await shownIn(ui, list.ids)).toBe(0)
+    expect(await ui.find({ key: `more-${list.name}` })).toBeUndefined()
+
+    await ui.press({ key: `fold-pbis:${list.name}` })
+    expect(await shownIn(ui, list.ids)).toBe(list.ids.length)
+    expect(await ui.find({ text: /show fewer/ })).toBeDefined()
+  })
+}
+
+test('expanding one list leaves the other two capped', async ($, on) => {
+  const writes: unknown[] = []
+  world(on, {}, writes, [], ALL_BOARD)
+  await started($)
+  const ui = await $.ui.mount({ ...TARGET })
+
+  expect(await caps(ui)).toEqual([3, 4, 4])
+
+  await ui.press({ key: 'more-waiting' })
+  expect(await caps(ui)).toEqual([3, 4, 6])
+  expect(writes.at(-1)).toEqual(['more:waiting'])
+
+  await ui.press({ key: 'more-promote' })
+  expect(await caps(ui)).toEqual([3, 6, 6])
+  expect(writes.at(-1)).toEqual(['more:waiting', 'more:promote'])
+})
+
+test('non-string entries in a saved expansion are ignored and valid ones kept', async ($, on) => {
+  world(on, { expanded: ['more:promote', 7, null] }, [], [], ALL_BOARD)
+  await started($)
+  const ui = await $.ui.mount({ ...TARGET })
+
+  expect(await caps(ui)).toEqual([3, 6, 4])
+})
+
+test('expansion and heading folds are stored under separate keys', async ($, on) => {
+  const writes: unknown[] = []
+  world(on, { collapsed: ['servers'] }, writes, [], ALL_BOARD)
+  await started($)
+  const ui = await $.ui.mount({ ...TARGET })
+
+  await ui.press({ key: 'more-next' })
+  expect(writes.at(-1)).toEqual(['more:next'])
+  await ui.press({ key: 'fold-pbis:next' })
+  expect(writes.at(-1)).toEqual(['servers', 'pbis:next'])
 })
