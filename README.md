@@ -93,6 +93,20 @@ Set under the plugin's settings in `/plugin`:
 A click never waits on the viewer: openers are launched detached. If one fails you get a toast
 with the reason; success is silent.
 
+## What it tells you, and when
+
+The pane keeps quiet unless something needs your attention that you can't already see.
+
+| Event | Shown as | Contains |
+|---|---|---|
+| A doc or dev server opened | nothing; the window appearing is the signal | |
+| An opener failed to launch | a toast, plus a dim line under **Docs** until the next success | `Could not open <name>: <first line of the error>` |
+| `/dash` could not draw the pane (narrow terminal, or a surface with no panes) | a toast, and the command's own output | `project-dashboard: pane not drawn, see the summary`, then why, then a plain-text summary of git, PBIs and docs |
+| `/goal` | the command's output row | the goal that was set, shown, or cleared |
+
+Toasts use the engine's standard box (top right, a few seconds, click to dismiss). A message is
+meant to say *what* failed and *why*; if it can't say why, it says what to run to find out.
+
 ## Requirements
 
 - Claude Code with plugin support, on Linux.
