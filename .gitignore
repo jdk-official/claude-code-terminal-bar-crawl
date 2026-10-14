@@ -3,3 +3,34 @@
 node_modules/
 *.bak
 *.bak-*
+
+# --- backlog-delivery: vendored from a private repo, local only. NEVER commit these. ---
+/tools/
+/plugins/backlog-delivery/
+
+# --- backlog-delivery (plugins/backlog-delivery/templates/backlog.gitignore) ---
+# backlog-delivery — safe-by-default: ignore ALL backlog state (nothing leaks/pushes by default).
+# State is local / filesystem-shared. Opt IN to versioned planning by un-ignoring the bundle below.
+docs/backlog/**
+
+# The adopter config stays untracked: it carries machine-local absolute paths and gate modes.
+backlog-delivery.config
+# The local overlay holds machine-specific overrides (path keys, model routing, notify command)
+# and is never tracked, whatever you decide for the config above.
+backlog-delivery.local.config
+
+# Opt-in planning bundle (un-ignore deliberately if you want planning versioned/shared via git).
+# Track BOARD + done-log together — the Done-index anchors point into done-log.md.
+# For subdirs (pbi/, specs/) un-comment the directory line AND its /** line together — git won't descend into a still-ignored directory.
+#!docs/backlog/BOARD.md
+#!docs/backlog/done-log.md
+#!docs/backlog/pbi/
+#!docs/backlog/pbi/**
+#!docs/backlog/specs/
+#!docs/backlog/specs/**
+
+# NEVER un-ignore: ledger (SPEC rule), reviews/, research/, handovers/ — transient/sensitive/local.
+# The rendered dashboard (docs/backlog/board.html + board.html.prev.json, written on demand or by
+# the Stop hook under [board] render_on_stop) is covered by the blanket rule above; keep it local.
+
+__pycache__/
