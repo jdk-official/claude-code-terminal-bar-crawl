@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import type { TestBody } from 'claude-code/testing'
 
 // The band as a person meets it: a first prompt becomes the goal (dim), /goal sets it,
 // "clear" removes it and the first prompt is then not taken again.
@@ -9,7 +10,7 @@ const BAND = {
   props: { hasSurvey: false, isWorking: false } as never,
 } as const
 
-const world = (on: Parameters<Parameters<typeof test>[1]>[1]): void => {
+const world = (on: Parameters<TestBody>[1]): void => {
   on('command.register', async () => ({ value: { command: 'goal' } }))
   on('prompt.submit', async (_$, e) => ({ text: e.text }))
   // The engine's own (empty) band, beneath the plugin: what `next(e)` reaches when there is no goal.
