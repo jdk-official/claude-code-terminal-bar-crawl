@@ -1,0 +1,75 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Shell scripts parse and pass shellcheck
+        run: |
+          set -euo pipefail
+          files=$(git ls-files '*.sh')
+          if [ -z "$files" ]; then
+            echo "No shell scripts found; the file list is empty"; exit 1
+          fi
+          while IFS= read -r f; do
+            bash -n "$f"
+            shellcheck --severity=warning "$f"
+          done <<< "$files"
+
+      - name: JSON files are valid
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, json, sys
+          files = [".claude-plugin/marketplace.json"] + glob.glob("plugins/*/.claude-plugin/plugin.json") + glob.glob("plugins/*/hooks/hooks.json")
+          bad = []
+          for f in files:
+              try:
+                  json.load(open(f))
+              except Exception as e:
+                  bad.append(f"{f}: {e}")
+          print(f"checked {len(files)} files")
+          if bad:
+              print("\n".join(bad)); sys.exit(1)
+          PY
+
+      - name: Private vendored code is not tracked
+        run: |
+          set -euo pipefail
+          tracked=$(git ls-files)
+          rc=0
+          hits=$(printf '%s\n' "$tracked" | grep -iE '^(tools/|plugins/backlog-delivery/)') || rc=$?
+          if [ "$rc" -gt 1 ]; then
+            echo "path scan failed with status $rc"; exit "$rc"
+          fi
+          if [ -n "$hits" ]; then
+            echo "These paths must never be committed:"; echo "$hits"; exit 1
+          fi
+
+      - name: No machine-specific or private strings
+        run: |
+          set -euo pipefail
+          # -a scans binary files too, so a private string inside an image fails the build.
+          rc=0
+          hits=$(git grep -naE '/home/jdk|/mnt/data|agent-catalog|angrayOne|kyte\.me' -- . ':!.github') || rc=$?
+          if [ "$rc" -gt 1 ]; then
+            echo "string scan failed with status $rc"; exit "$rc"
+          fi
+          if [ -n "$hits" ]; then
+            echo "Found machine-specific or private strings:"; echo "$hits"; exit 1
+          fi
+
+      - name: Guard steps can fail
+        run: bash .github/tests/steps-can-fail.sh
