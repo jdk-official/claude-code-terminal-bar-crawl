@@ -8,9 +8,12 @@ const MIN_PROMPT = 12
 
 const goal = atom({ plugin: 'goal-pin', key: 'goal' } as const, null)
 const pbi = atom({ plugin: 'goal-pin', key: 'pbi' } as const, null)
+// Counts refreshes started in this session; only the latest one may write its result.
+const refreshes = atom({ plugin: 'goal-pin', key: 'refreshes' } as const, 0)
 
 const BOARD_DEFAULT = 'docs/backlog/BOARD.md'
 const GIT_TIMEOUT = 5000
+const MAX_BOARD_BYTES = 1024 * 1024
 
 // A branch such as `pbi/7-some-slug` or `pbi-7-some-slug` names a PBI; its id is the number zero-padded to 3 digits.
 export function pbiFromBranch(branch: string): { id: string; slug: string } | null {
@@ -35,36 +38,44 @@ export function pbiTitle(board: string, id: string): string | null {
 const configValue = (text: string | null, key: string): string | null =>
   new RegExp(`^\\s*${key}\\s*=\\s*"([^"]+)"`, 'm').exec(text ?? '')?.[1] ?? null
 
+// A configured board path stays inside the repo: relative, with no `..` segment; otherwise the default.
+export function safeBoardPath(path: string | null): string {
+  if (path === null || path.trim() === '' || path.startsWith('/') || path.startsWith('\\')) return BOARD_DEFAULT
+  if (/^[A-Za-z]:/.test(path) || path.split(/[/\\]/).includes('..')) return BOARD_DEFAULT
+
+  return path
+}
+
 // Reads the branch and, when it names a PBI, its title; any failure keeps the last value.
 // A slow older refresh must not overwrite a newer one: only the latest started may write.
-let latest = 0
-
 async function refreshPbi($: any): Promise<void> {
-  const mine = ++latest
   try {
-    const head = await $.process.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], { timeoutMs: GIT_TIMEOUT })
+    const mine = await update($, refreshes, n => (n ?? 0) + 1)
+    const isLatest = async (): Promise<boolean> => (await read($, refreshes)) === mine
+    const cwd: string = await $.session.cwd()
+    const head = await $.process.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], { cwd, timeoutMs: GIT_TIMEOUT })
     if (head.exitCode !== 0) return
     const found = pbiFromBranch(head.stdout)
     if (found === null) {
-      if (mine === latest) await update($, pbi, () => null)
+      if (await isLatest()) await update($, pbi, () => null)
 
       return
     }
 
     let title: string | null = null
-    const top = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { timeoutMs: GIT_TIMEOUT })
+    const top = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { cwd, timeoutMs: GIT_TIMEOUT })
     const root = top.exitCode === 0 ? String(top.stdout).trim() : ''
     if (root !== '') {
       const config = await $.fs.read(`${root}/backlog-delivery.config`).catch(() => null)
       const local = await $.fs.read(`${root}/backlog-delivery.local.config`).catch(() => null)
-      const path = configValue(local, 'board_path') ?? configValue(config, 'board_path') ?? BOARD_DEFAULT
+      const path = safeBoardPath(configValue(local, 'board_path') ?? configValue(config, 'board_path'))
       const board = await $.fs.read(`${root}/${path}`).catch(() => null)
-      if (typeof board === 'string') title = pbiTitle(board, found.id)
+      if (typeof board === 'string' && board.length <= MAX_BOARD_BYTES) title = pbiTitle(board, found.id)
     }
     title ??= found.slug.replace(/-/g, ' ')
 
     const text = title === '' ? found.id : `${found.id} · ${title}`
-    if (mine === latest) await update($, pbi, () => ({ text }))
+    if (await isLatest()) await update($, pbi, () => ({ text }))
   } catch {
     // Keep the last known value.
   }
@@ -120,6 +131,8 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('prompt.submit', async ($, e, next) => {
+    // Not awaited: a branch switch is picked up at the next prompt without delaying it.
+    void refreshPbi($)
     if ((await read($, goal)) === null) {
       const text = goalFromPrompt(e.text)
       if (text !== null) await update($, goal, () => ({ text, auto: true }))

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { goalFromPrompt, pbiFromBranch, pbiTitle } from './register'
+import { goalFromPrompt, pbiFromBranch, pbiTitle, safeBoardPath } from './register'
 
 test('goal: first real sentence only', () => {
   expect(goalFromPrompt('  Add a PBI summary to the dashboard\nand more detail')).toBe('Add a PBI summary to the dashboard')
@@ -62,4 +62,17 @@ test('title lookup: numeric id match, extra cells, punctuation, CRLF, prose igno
   expect(pbiTitle(board, 'PBI-001')).toBe('Short id')
   expect(pbiTitle('PBI-016 is mentioned in a sentence.\n', 'PBI-016')).toBeNull()
   expect(pbiTitle('| PBI-160 | Other | Doing |\n', 'PBI-016')).toBeNull()
+})
+
+test('board path: relative paths pass, absolute, parent and empty ones fall back', () => {
+  const dflt = 'docs/backlog/BOARD.md'
+
+  expect(safeBoardPath('work/BOARD.md')).toBe('work/BOARD.md')
+  expect(safeBoardPath('/etc/passwd')).toBe(dflt)
+  expect(safeBoardPath('../BOARD.md')).toBe(dflt)
+  expect(safeBoardPath('a/../b/BOARD.md')).toBe(dflt)
+  expect(safeBoardPath('a\\..\\b')).toBe(dflt)
+  expect(safeBoardPath('C:\\x\\BOARD.md')).toBe(dflt)
+  expect(safeBoardPath('')).toBe(dflt)
+  expect(safeBoardPath(null)).toBe(dflt)
 })

@@ -12,6 +12,7 @@ const BAND = {
 const world = (on: Parameters<Parameters<typeof test>[1]>[1]): void => {
   on('command.register', async () => ({ value: { command: 'goal' } }))
   on('prompt.submit', async (_$, e) => ({ text: e.text }))
+  on('session.cwd', async () => ({ value: '/r' }))
   // The engine's own (empty) band, beneath the plugin: what `next(e)` reaches when there is no goal.
   on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
 }
@@ -367,4 +368,148 @@ test('a first-prompt goal wins over a PBI that lands later', async ($, on) => {
 
   expect(await ui.find({ text: /Add a PBI summary to the dashboard/ })).toBeDefined()
   expect(await ui.find({ text: /PBI-016/ })).toBeUndefined()
+})
+
+test('the session directory reaches both git calls', async ($, on) => {
+  world(on)
+  on('session.start', async () => ({ cwd: '/r' }))
+  const cwds: Array<string | undefined> = []
+  on('process.run', async (_$, e) => {
+    cwds.push(e.init?.cwd)
+    const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isTruncated: false } })
+
+    return out(e.argv.includes('--abbrev-ref') ? 'pbi/016-x\n' : '/r\n')
+  })
+  on('fs.read', async () => ({ deny: 'ENOENT' }))
+  const writes = watchPbiWrites(on)
+  await $.session.start(START)
+  await writes.until(1)
+
+  expect(cwds).toEqual(['/r', '/r'])
+})
+
+test('a prompt triggers a refresh that picks up a branch switch', async ($, on) => {
+  const state = { branch: 'main' as string | null, files: {} as Record<string, string>, asked: [] as string[] }
+  liveWorld(on, state)
+  const writes = watchPbiWrites(on)
+  await $.session.start(START)
+  await writes.until(1)
+  state.branch = 'pbi/009-switched'
+  await $.prompt.submit({ text: 'yes' } as never)
+  await writes.until(2)
+  const ui = await $.ui.mount({ ...BAND })
+
+  expect(await ui.find({ text: /PBI-009 · switched/ })).toBeDefined()
+})
+
+test('a configured board path that leaves the repo is not read; the default board is used', async ($, on) => {
+  const state = {
+    branch: 'pbi/016-x' as string | null,
+    files: {
+      '/r/backlog-delivery.local.config': 'board_path = "../../outside.md"\n',
+      '/outside.md': '| PBI-016 | From outside | Doing |\n',
+      '/r/docs/backlog/BOARD.md': '| PBI-016 | From default | Doing |\n',
+    } as Record<string, string>,
+    asked: [] as string[],
+  }
+  liveWorld(on, state)
+  const writes = watchPbiWrites(on)
+  await $.session.start(START)
+  await writes.until(1)
+  const ui = await $.ui.mount({ ...BAND })
+
+  expect(await ui.find({ text: /PBI-016 · From default/ })).toBeDefined()
+  expect(state.asked.filter(path => path.includes('outside') || path.includes('..'))).toEqual([])
+  expect(state.asked).toContain('/r/docs/backlog/BOARD.md')
+})
+
+// A board whose row is followed by filler so that the whole text is exactly `length` characters.
+const boardOfLength = (length: number): string => {
+  const row = '| PBI-016 | From the board | Doing |\n'
+
+  return row + 'x'.repeat(length - row.length)
+}
+
+test('a board larger than the size cap is ignored and the slug stands in', async ($, on) => {
+  const state = {
+    branch: 'pbi/016-from-slug' as string | null,
+    files: { '/r/docs/backlog/BOARD.md': boardOfLength(1024 * 1024 + 1) } as Record<string, string>,
+    asked: [] as string[],
+  }
+  liveWorld(on, state)
+  const writes = watchPbiWrites(on)
+  await $.session.start(START)
+  await writes.until(1)
+  const ui = await $.ui.mount({ ...BAND })
+
+  expect(await ui.find({ text: /PBI-016 · from slug/ })).toBeDefined()
+  expect(await ui.find({ text: /From the board/ })).toBeUndefined()
+})
+
+test('a board of exactly the size cap is accepted', async ($, on) => {
+  const state = {
+    branch: 'pbi/016-from-slug' as string | null,
+    files: { '/r/docs/backlog/BOARD.md': boardOfLength(1024 * 1024) } as Record<string, string>,
+    asked: [] as string[],
+  }
+  liveWorld(on, state)
+  const writes = watchPbiWrites(on)
+  await $.session.start(START)
+  await writes.until(1)
+  const ui = await $.ui.mount({ ...BAND })
+
+  expect(await ui.find({ text: /PBI-016 · From the board/ })).toBeDefined()
+})
+
+test('prompt.submit returns without waiting for the refresh it starts', async ($, on) => {
+  world(on)
+  on('session.start', async () => ({ cwd: '/r' }))
+  let release: () => void = () => {}
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const started = counter()
+  let hold = false
+  on('process.run', async (_$, e) => {
+    started.hit()
+    if (hold) await gate
+    const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isTruncated: false } })
+
+    return out(e.argv.includes('--abbrev-ref') ? 'pbi/016-late\n' : '/r\n')
+  })
+  on('fs.read', async () => ({ deny: 'ENOENT' }))
+  const writes = watchPbiWrites(on)
+  await $.session.start(START)
+  await writes.until(1)
+  hold = true
+
+  // Resolves while the refresh's git call is still held, so the hook did not wait for it.
+  await $.prompt.submit({ text: 'Add a PBI summary to the dashboard' } as never)
+  await started.until(3)
+  const ui = await $.ui.mount({ ...BAND })
+  expect(await ui.find({ text: /Add a PBI summary to the dashboard/ })).toBeDefined()
+
+  release()
+  await writes.until(2)
+})
+
+test('a failing refresh never rejects prompt.submit and the goal is still taken', async ($, on) => {
+  world(on)
+  on('session.start', async () => ({ cwd: '/r' }))
+  const runs = counter()
+  on('process.run', async () => {
+    runs.hit()
+
+    return { deny: 'EPERM' }
+  })
+  on('fs.read', async () => ({ deny: 'ENOENT' }))
+  await $.session.start(START)
+  await runs.until(1)
+
+  await $.prompt.submit({ text: 'Add a PBI summary to the dashboard' } as never)
+  await runs.until(2)
+  await drain()
+  const ui = await $.ui.mount({ ...BAND })
+
+  expect(await ui.find({ text: /Add a PBI summary to the dashboard/ })).toBeDefined()
 })
