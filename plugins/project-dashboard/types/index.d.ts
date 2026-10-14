@@ -37,6 +37,7 @@ declare module 'claude-code' {
       lastRepo: string | null
       notice: string | null
       collapsed: string[]
+      expanded: string[]
     }
   }
 }
