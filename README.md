@@ -130,6 +130,17 @@ claude plugin test plugins/project-dashboard
 claude plugin test plugins/goal-pin
 ```
 
+## How this repo is developed
+
+Work is planned and delivered with [backlog-delivery](docs/adr/0006-private-code-never-published.md):
+a board of PBIs, gated branches, and ADRs. The decisions behind the design are in
+[`docs/adr`](docs/adr) (portable by default, session-scoped servers, say little, one shared copy, and a
+checklist for screenshots).
+
+The board and PBI files are local to the maintainer's checkout. The workflow's own tools are vendored
+from a private repository, are never committed here, and `.gitignore` keeps them out (`/tools/`,
+`/plugins/backlog-delivery/`).
+
 ## License
 
 [MIT](LICENSE)
