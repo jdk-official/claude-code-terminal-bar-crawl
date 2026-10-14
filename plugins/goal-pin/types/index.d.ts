@@ -5,6 +5,8 @@ declare module 'claude-code' {
   interface PluginState {
     'goal-pin': {
       goal: GoalInfo | null
+      // The PBI the git branch names, shown when there is no goal.
+      pbi: { text: string } | null
     }
   }
 }
