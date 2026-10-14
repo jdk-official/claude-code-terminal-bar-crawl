@@ -7,6 +7,12 @@
 #                              dark_foreground, green, yellow, red, magenta). Defaults to the
 #                              Omarchy theme's colors.toml when present, else built-in colours.
 #   CLAUDE_STATUSLINE_ICONS    set to "plain" for ASCII instead of Nerd Font glyphs.
+#   CLAUDE_STATUSLINE_EXTRAS   comma-separated optional segments, all off by default:
+#                                updates  pending pacman updates (checkupdates, cached 30 min)
+#                                failed   failed systemd units, system + user (systemctl)
+#                                burn     arrow on the 5h meter: usage ahead of / level with elapsed time
+#                              Unknown names are ignored. "jobs" is not offered: the status line
+#                              input carries no background-job data to count.
 command -v jq >/dev/null 2>&1 || { echo "statusline: jq not found"; exit 0; }
 in=$(cat)
 j() { jq -r "$1 // empty" <<<"$in" 2>/dev/null; }
@@ -24,8 +30,10 @@ c_warn=$(col yellow f9e2af);            c_bad=$(col red f38ba8); c_mag=$(col mag
 # icons: Nerd Font glyphs by default, ASCII with CLAUDE_STATUSLINE_ICONS=plain
 if [ "$CLAUDE_STATUSLINE_ICONS" = plain ]; then
   i_model="" i_eff="" i_fast="fast" i_dir="" i_repo="" i_br="" i_sep="|" i_sub=">"
+  i_upd="upd " i_fail="failed " i_up="^" i_lvl="="
 else
   i_model="󰧑 " i_eff=" " i_fast="󱐋" i_dir="󰉋 " i_repo=" " i_br=" " i_sep="│" i_sub="›"
+  i_upd=$'\U000f06b0 ' i_fail=$'\U000f0026 ' i_up="↑" i_lvl="→"
 fi
 SEP="  ${c_mute}${i_sep}${R}  "
 
@@ -54,6 +62,45 @@ meter() {
     fi
   fi
   printf '%s %s%s' "$lbl" "$(bar "$p" 5)" "$left"
+}
+
+# Optional extras, each opt-in through CLAUDE_STATUSLINE_EXTRAS (see header).
+extras=",${CLAUDE_STATUSLINE_EXTRAS// /},"
+want() { [[ $extras == *",$1,"* ]]; }
+
+# Pending update count from a cache file holding "epoch count". The slow checkupdates only
+# ever runs detached; a stale value is served meanwhile. Refreshing is claimed first by
+# rewriting the timestamp, so concurrent refreshes do not pile up.
+updates_count() {
+  command -v checkupdates >/dev/null 2>&1 || return
+  local dir=${XDG_CACHE_HOME:-$HOME/.cache}/claude-statusline f ts=0 n=0 now
+  f=$dir/updates; now=$(date +%s)
+  [ -r "$f" ] && read -r ts n <"$f" 2>/dev/null
+  [[ $ts =~ ^[0-9]+$ ]] || ts=0
+  [[ $n =~ ^[0-9]+$ ]] || n=0
+  if [ $(( now - ts )) -ge 1800 ]; then
+    if mkdir -p "$dir" 2>/dev/null && printf '%s %s\n' "$now" "$n" >"$f" 2>/dev/null; then
+      (
+        out=$(checkupdates 2>/dev/null); rc=$?
+        c=""
+        [ $rc -eq 0 ] && c=$(printf '%s\n' "$out" | grep -c .)
+        [ $rc -eq 2 ] && c=0
+        [ -n "$c" ] && printf '%s %s\n' "$(date +%s)" "$c" >"$f.$$" 2>/dev/null && mv -f "$f.$$" "$f" 2>/dev/null
+      ) >/dev/null 2>&1 &
+      disown 2>/dev/null
+    fi
+  fi
+  [ "$n" -gt 0 ] && printf '%s' "$n"
+}
+
+# Failed systemd unit count across the system and user managers.
+failed_count() {
+  command -v systemctl >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 || return
+  local a b
+  a=$(timeout 2 systemctl --failed --no-legend 2>/dev/null | grep -c .)
+  b=$(timeout 2 systemctl --user --failed --no-legend 2>/dev/null | grep -c .)
+  a=$(( ${a:-0} + ${b:-0} ))
+  [ "$a" -gt 0 ] && printf '%s' "$a"
 }
 
 # 1. model
@@ -93,10 +140,26 @@ s_ctx=""; pct=$(j '.context_window.used_percentage')
 # 5. usage windows
 m5=$(meter "5h" "$(j '.rate_limits.five_hour.used_percentage')" "$(j '.rate_limits.five_hour.resets_at')")
 m7=$(meter "7d" "$(j '.rate_limits.seven_day.used_percentage')" "$(j '.rate_limits.seven_day.resets_at')")
+# burn: 5h usage against the share of the 5h window already elapsed (10 points of slack)
+if want burn && [ -n "$m5" ]; then
+  bp=$(j '.rate_limits.five_hour.used_percentage'); bp=${bp%.*}
+  brs=$(j '.rate_limits.five_hour.resets_at')
+  if [[ $brs =~ ^[0-9]+$ ]]; then bts=$brs; else bts=$(date -d "$brs" +%s 2>/dev/null); fi
+  printf -v bnow '%(%s)T' -1
+  if [[ $bp =~ ^[0-9]+$ && $bts =~ ^[0-9]+$ ]] && [ "$bts" -gt "$bnow" ] && [ $(( bts - bnow )) -le 18000 ]; then
+    be=$(( (18000 - (bts - bnow)) * 100 / 18000 ))
+    if [ $(( bp - be )) -gt 10 ]; then m5+=" ${c_warn}${i_up}${R}"
+    elif [ $(( be - bp )) -le 10 ]; then m5+=" ${c_mute}${i_lvl}${R}"; fi
+  fi
+fi
 s_use="$m5${m5:+${m7:+  }}$m7"
 
+s_x=""
+if want updates; then n=$(updates_count); [ -n "$n" ] && s_x+="${c_accent}${i_upd}${n}${R}"; fi
+if want failed; then n=$(failed_count); [ -n "$n" ] && s_x+="${s_x:+  }${c_bad}${i_fail}${n}${R}"; fi
+
 out=""
-for seg in "$s_model" "$s_effort" "$s_proj" "$s_ctx" "$s_use"; do
+for seg in "$s_model" "$s_effort" "$s_proj" "$s_ctx" "$s_use" "$s_x"; do
   [ -n "$seg" ] && out+="${out:+$SEP}$seg"
 done
 printf '%s\n' "$out"
