@@ -1,4 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
+import type { TestBody } from 'claude-code/testing'
+
+// The tests run under the engine's runtime, which provides timers; the es2023 lib has none.
+declare const setTimeout: (handler: () => void, ms: number) => unknown
 
 // The pane as a person drives it, fed through the mod's own refresh: a fake repo at
 // /r with two ADRs, a handover, a board and one dev server. Press a heading and see
@@ -20,7 +24,7 @@ const BOARD = [
   '| PBI-1 | First | merged |',
 ].join('\n')
 
-const file = (name: string) => ({ name, kind: 'file', size: 1, mtimeMs: 1, isLink: false })
+const file = (name: string) => ({ name, kind: 'file' as const, size: 1, mtimeMs: 1, isLink: false })
 
 const TARGET = {
   plugin: 'project-dashboard',
@@ -33,7 +37,7 @@ const TARGET = {
 const SS = 'LISTEN 0 511 127.0.0.1:5173 0.0.0.0:* users:(("node",pid=4101,fd=20))'
 
 const world = (
-  on: Parameters<Parameters<typeof test>[1]>[1],
+  on: Parameters<TestBody>[1],
   store: Record<string, unknown>,
   writes: unknown[] = [],
   runs: string[][] = [],
@@ -54,13 +58,13 @@ const world = (
   on('process.run', async (_$, e) => {
     runs.push([...e.argv])
     const [cmd, ...rest] = e.argv
-    const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isTruncated: false } })
+    const out = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     if (cmd === 'git' && rest[0] === 'rev-parse') return out('/r\n')
     if (cmd === 'git') return out('## main\n')
     if (cmd === 'ss') return out(SS)
     if (cmd === 'sh') return out('4101\t/r\t0\n')
 
-    return { value: { exitCode: 1, stdout: '', stderr: '', isTruncated: false } }
+    return { value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('fs.read', async (_$, e) =>
     e.path === '/r/docs/backlog/BOARD.md' ? { value: BOARD } : { deny: 'ENOENT' },
@@ -78,9 +82,9 @@ const world = (
 }
 
 // session.start kicks the first refresh off unawaited; give it a turn to land.
-const started = async ($: Parameters<Parameters<typeof test>[1]>[0]): Promise<void> => {
+const started = async ($: Parameters<TestBody>[0]): Promise<void> => {
   await $.session.start({ cwd: '/r', surface: 'terminal', isInteractive: true } as never)
-  await new Promise(resolve => setTimeout(resolve, 50))
+  await new Promise<void>(resolve => setTimeout(resolve, 50))
 }
 
 test('pressing headings folds them and writes the store', async ($, on) => {

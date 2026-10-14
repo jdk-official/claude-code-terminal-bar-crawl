@@ -130,6 +130,8 @@ claude plugin test plugins/project-dashboard
 claude plugin test plugins/goal-pin
 ```
 
+Type-check with `npx --yes -p typescript@5 tsc -p plugins/<name>` (load the plugin once in an interactive Claude Code session first so the engine generates its types); see [docs/development.md](docs/development.md).
+
 ## How this repo is developed
 
 Work is planned and delivered with [backlog-delivery](docs/adr/0006-private-code-never-published.md):
